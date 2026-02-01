@@ -69,6 +69,8 @@ export interface UuidOptions {
     packet?: number | string;
 }
 
+export type SmartSpeedConfig = boolean | ((error: string, prn: number, packetSize: number) => { prn: number, packetSize: number } | null);
+
 export class SecureDfu extends EventDispatcher {
     public static SERVICE_UUID: number = 0xFE59;
     public static EVENT_LOG: string = "log";
@@ -102,6 +104,13 @@ export class SecureDfu extends EventDispatcher {
      * Default to true for Boks stability.
      */
     public forceRestart: boolean = true;
+
+    /**
+     * Smart Speed Degradation.
+     * If enabled, the library will automatically reduce PRN and/or packetSize
+     * when errors occur, and retry the transfer.
+     */
+    public enableSmartSpeed: SmartSpeedConfig = false;
 
     private totalBytes: number = 0;
     private sentBytes: number = 0;
@@ -314,6 +323,21 @@ export class SecureDfu extends EventDispatcher {
                 return this.transferObject(buffer, createType, maxSize, end);
             }
             this.log("transfer complete");
+        })
+        .catch(async (error) => {
+            if (this.calculateSmartSpeed(error.message)) {
+                // Reset write queue to allow new operations
+                this.writeQueue = Promise.resolve();
+
+                if (this.packetReceiptNotification > 0) {
+                    const view = new DataView(new ArrayBuffer(2));
+                    view.setUint16(0, this.packetReceiptNotification, LITTLE_ENDIAN);
+                    await this.sendControl(OPERATIONS.RECEIPT_NOTIFICATIONS, view.buffer);
+                }
+                this.packetsSentSincePRN = 0;
+                return this.transferObject(buffer, createType, maxSize, offset);
+            }
+            throw error;
         });
     }
 
@@ -344,6 +368,44 @@ export class SecureDfu extends EventDispatcher {
 
     private checkCrc(buffer: ArrayBuffer, crc: number): boolean {
         return crc === this.crc32Impl(new Uint8Array(buffer));
+    }
+
+    private calculateSmartSpeed(error: string): boolean {
+        if (!this.enableSmartSpeed) return false;
+
+        let newPrn = this.packetReceiptNotification;
+        let newSize = this.packetSize;
+        let changed = false;
+
+        if (typeof this.enableSmartSpeed === "function") {
+            const result = this.enableSmartSpeed(error, newPrn, newSize);
+            if (result) {
+                newPrn = result.prn;
+                newSize = result.packetSize;
+                changed = true;
+            }
+        } else {
+            // Default Strategy
+            if (newSize > 20) {
+                newSize = 20;
+                changed = true;
+            } else if (newPrn > 1) {
+                newPrn = Math.ceil(newPrn / 2);
+                changed = true;
+            } else if (newPrn === 0) {
+                // If PRN was disabled (0), enable it safely
+                newPrn = 12;
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            this.log(`Smart Speed: Degrading parameters. PRN: ${this.packetReceiptNotification}->${newPrn}, MTU: ${this.packetSize}->${newSize}`);
+            this.packetReceiptNotification = newPrn;
+            this.packetSize = newSize;
+            return true;
+        }
+        return false;
     }
 
     public requestDevice(buttonLess: boolean, filters: any, uuids: UuidOptions = this.DEFAULT_UUIDS): Promise<BluetoothDevice> {
