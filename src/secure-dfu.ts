@@ -3,34 +3,16 @@
 * Copyright (c) 2018 Rob Moran
 *
 * The MIT License (MIT)
-*
-* Permission is hereby granted, free of charge, to any person obtaining a copy
-* of this software and associated documentation files (the "Software"), to deal
-* in the Software without restriction, including without limitation the rights
-* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-* copies of the Software, and to permit persons to whom the Software is
-* furnished to do so, subject to the following conditions:
-*
-* The above copyright notice and this permission notice shall be included in all
-* copies or substantial portions of the Software.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-* SOFTWARE.
 */
 
 import { EventDispatcher } from "./dispatcher";
+import * as CRC32 from "crc-32";
 
 const CONTROL_UUID = "8ec90001-f315-4f60-9fb8-838830daea50";
 const PACKET_UUID = "8ec90002-f315-4f60-9fb8-838830daea50";
 const BUTTON_UUID = "8ec90003-f315-4f60-9fb8-838830daea50";
 
 const LITTLE_ENDIAN = true;
-const PACKET_SIZE = 20;
 
 const OPERATIONS = {
     BUTTON_COMMAND:         [ 0x01 ],
@@ -45,76 +27,38 @@ const OPERATIONS = {
 };
 
 const RESPONSE = {
-    // Invalid code
     0x00: "Invalid opcode",
-    // Success
     0x01: "Operation successful",
-    // Opcode not supported
     0x02: "Opcode not supported",
-    // Invalid parameter
     0x03: "Missing or invalid parameter value",
-    // Insufficient resources
     0x04: "Not enough memory for the data object",
-    // Invalid object
-    0x05: "Data object does not match the firmware and hardware requirements, the signature is wrong, or parsing the command failed",
-    // Unsupported type
+    0x05: "Data object does not match requirements",
     0x07: "Not a valid object type for a Create request",
-    // Operation not permitted
-    0x08: "The state of the DFU process does not allow this operation",
-    // Operation failed
+    0x08: "Operation not permitted (Wrong state)",
     0x0A: "Operation failed",
-    // Extended error
     0x0B: "Extended error"
 };
 
 const EXTENDED_ERROR = {
-    // No error
-    0x00: "No extended error code has been set. This error indicates an implementation problem",
-    // Invalid error code
-    0x01: "Invalid error code. This error code should never be used outside of development",
-    // Wrong command format
-    0x02: "The format of the command was incorrect",
-    // Unknown command
-    0x03: "The command was successfully parsed, but it is not supported or unknown",
-    // Init command invalid
-    0x04: "The init command is invalid. The init packet either has an invalid update type or it is missing required fields for the update type",
-    // Firmware version failure
-    0x05: "The firmware version is too low. For an application, the version must be greater than the current application. For a bootloader, it must be greater than or equal to the current version",
-    // Hardware version failure
-    0x06: "The hardware version of the device does not match the required hardware version for the update",
-    // Softdevice version failure
-    0x07: "The array of supported SoftDevices for the update does not contain the FWID of the current SoftDevice",
-    // Signature missing
-    0x08: "The init packet does not contain a signature",
-    // Wrong hash type
-    0x09: "The hash type that is specified by the init packet is not supported by the DFU bootloader",
-    // Hash failed
-    0x0A: "The hash of the firmware image cannot be calculated",
-    // Wrong signature type
-    0x0B: "The type of the signature is unknown or not supported by the DFU bootloader",
-    // Verification failed
-    0x0C: "The hash of the received firmware image does not match the hash in the init packet",
-    // Insufficient space
-    0x0D: "The available space on the device is insufficient to hold the firmware"
+    0x00: "No extended error",
+    0x01: "Invalid error code",
+    0x02: "Wrong command format",
+    0x03: "Unknown command",
+    0x04: "Init command invalid",
+    0x05: "Firmware version failure (Downgrade blocked)",
+    0x06: "Hardware version failure",
+    0x07: "Softdevice version failure",
+    0x08: "Signature missing",
+    0x09: "Wrong hash type",
+    0x0A: "Hash failed",
+    0x0B: "Wrong signature type",
+    0x0C: "Verification failed (CRC mismatch)",
+    0x0D: "Insufficient space"
 };
 
-/**
- * BluetoothLE Scan Filter Init interface
- */
 export interface BluetoothLEScanFilterInit {
-    /**
-     * An array of service UUIDs to filter on
-     */
     services?: Array<string | number>;
-
-    /**
-     * The device name to filter on
-     */
     name?: string;
-
-    /**
-     * The device name prefix to filter on
-     */
     namePrefix?: string;
 }
 
@@ -125,26 +69,9 @@ export interface UuidOptions {
     packet?: number | string;
 }
 
-/**
- * Secure Device Firmware Update class
- */
 export class SecureDfu extends EventDispatcher {
-
-    /**
-     * DFU Service unique identifier
-     */
     public static SERVICE_UUID: number = 0xFE59;
-
-    /**
-     * Log event
-     * @event
-     */
     public static EVENT_LOG: string = "log";
-
-    /**
-     * Progress event
-     * @event
-     */
     public static EVENT_PROGRESS: string = "progress";
 
     private DEFAULT_UUIDS: UuidOptions = {
@@ -157,17 +84,42 @@ export class SecureDfu extends EventDispatcher {
     private notifyFns: {} = {};
     private controlChar: BluetoothRemoteGATTCharacteristic = null;
     private packetChar: BluetoothRemoteGATTCharacteristic = null;
+    private writeQueue: Promise<any> = Promise.resolve();
 
     /**
-     * Characteristic constructor
-     * @param bluetooth A bluetooth instance
-     * @param crc32 A CRC32 function
-     * @param delay Milliseconds of delay between packets
+     * Packet size for data transfer. Default to 20 for maximum compatibility.
+     * Can be increased (e.g., 100) for better performance on modern devices.
      */
-    constructor(private crc32: (data: Array<number> | Uint8Array, seed?: number) => number,
-                private bluetooth?: Bluetooth,
-                private delay: number = 0) {
+    public packetSize: number = 20;
+
+    /**
+     * PRN interval. Set to 15-20 for good speed.
+     */
+    public packetReceiptNotification: number = 0;
+
+    /**
+     * If true, always starts transfer from byte 0, ignoring device cache.
+     * Default to true for Boks stability.
+     */
+    public forceRestart: boolean = true;
+
+    private totalBytes: number = 0;
+    private sentBytes: number = 0;
+    private validatedBytes: number = 0;
+    private packetsSentSincePRN: number = 0;
+    private prnResolver: () => void = null;
+    private currentObjectType: string = "unknown";
+
+    private crc32Impl: (data: Array<number> | Uint8Array, seed?: number) => number;
+
+    constructor(
+        crc32?: (data: Array<number> | Uint8Array, seed?: number) => number,
+        private bluetooth?: Bluetooth,
+        private delay: number = 0
+    ) {
         super();
+        // Use provided CRC32 or fallback to internal library
+        this.crc32Impl = crc32 || CRC32.buf;
 
         if (!this.bluetooth && window && window.navigator && window.navigator.bluetooth) {
             this.bluetooth = navigator.bluetooth;
@@ -175,17 +127,37 @@ export class SecureDfu extends EventDispatcher {
     }
 
     private log(message: string) {
-        this.dispatchEvent(SecureDfu.EVENT_LOG, {
-            message: message
+        this.dispatchEvent(SecureDfu.EVENT_LOG, { message: message });
+    }
+
+    private emitProgress() {
+        this.dispatchEvent(SecureDfu.EVENT_PROGRESS, {
+            object: this.currentObjectType,
+            totalBytes: this.totalBytes || 1,
+            sentBytes: this.sentBytes,
+            validatedBytes: this.validatedBytes
         });
     }
 
-    private progress(bytes: number) {
-        this.dispatchEvent(SecureDfu.EVENT_PROGRESS, {
-            object: "unknown",
-            totalBytes: 0,
-            currentBytes: bytes
+    private async queuedWrite(char: BluetoothRemoteGATTCharacteristic, value: BufferSource): Promise<void> {
+        this.writeQueue = this.writeQueue.then(async () => {
+            let attempts = 15;
+            while (attempts > 0) {
+                try {
+                    await char.writeValue(value);
+                    return;
+                } catch (e) {
+                    if (e.message.includes("in progress")) {
+                        attempts--;
+                        await new Promise(r => setTimeout(r, 150));
+                    } else {
+                        throw e;
+                    }
+                }
+            }
+            throw new Error("GATT write failed (Device Busy)");
         });
+        return this.writeQueue;
     }
 
     private connect(device: BluetoothDevice): Promise<BluetoothDevice> {
@@ -193,63 +165,57 @@ export class SecureDfu extends EventDispatcher {
             this.notifyFns = {};
             this.controlChar = null;
             this.packetChar = null;
-        });
+            this.writeQueue = Promise.resolve();
+        }, false);
 
         return this.gattConnect(device)
         .then(characteristics => {
-            this.log(`found ${characteristics.length} characteristic(s)`);
-
-            this.packetChar = characteristics.find(characteristic => {
-                return (characteristic.uuid === PACKET_UUID);
-            });
-
-            if (!this.packetChar) throw new Error("Unable to find packet characteristic");
-            this.log("found packet characteristic");
-
-            this.controlChar = characteristics.find(characteristic => {
-                return (characteristic.uuid === CONTROL_UUID);
-            });
-
-            if (!this.controlChar) throw new Error("Unable to find control characteristic");
-            this.log("found control characteristic");
-
-            if (!this.controlChar.properties.notify && !this.controlChar.properties.indicate) {
-                throw new Error("Control characteristic does not allow notifications");
-            }
+            this.packetChar = characteristics.find(c => c.uuid === PACKET_UUID);
+            this.controlChar = characteristics.find(c => c.uuid === CONTROL_UUID);
+            if (!this.packetChar || !this.controlChar) throw new Error("Missing DFU characteristics");
 
             return this.controlChar.startNotifications();
         })
         .then(() => {
-            this.controlChar.addEventListener("characteristicvaluechanged", this.handleNotification.bind(this));
+            this.controlChar.addEventListener("characteristicvaluechanged", this.handleNotification.bind(this), false);
             this.log("enabled control notifications");
-            return device;
-        });
+
+            if (this.packetReceiptNotification > 0) {
+                const view = new DataView(new ArrayBuffer(2));
+                view.setUint16(0, this.packetReceiptNotification, LITTLE_ENDIAN);
+                this.log(`enabling PRNs (interval: ${this.packetReceiptNotification})`);
+                return this.sendControl(OPERATIONS.RECEIPT_NOTIFICATIONS, view.buffer);
+            }
+        })
+        .then(() => device);
     }
 
     private gattConnect(device: BluetoothDevice, serviceUUID: number | string = SecureDfu.SERVICE_UUID): Promise<Array<BluetoothRemoteGATTCharacteristic>> {
         return Promise.resolve()
-        .then(() => {
-            if (device.gatt.connected) return device.gatt;
-            return device.gatt.connect();
-        })
+        .then(() => device.gatt.connected ? device.gatt : device.gatt.connect())
         .then(server => {
             this.log("connected to gatt server");
-            return server.getPrimaryService(serviceUUID)
-            .catch(() => {
-                throw new Error("Unable to find DFU service");
-            });
+            return server.getPrimaryService(serviceUUID).catch(() => { throw new Error("Unable to find DFU service"); });
         })
-        .then(service => {
-            this.log("found DFU service");
-            return service.getCharacteristics();
-        });
+        .then(service => service.getCharacteristics());
     }
 
     private handleNotification(event: any) {
         const view = event.target.value;
 
+        if (view.getUint8(0) === 0x03) {
+            this.validatedBytes = view.getUint32(1, LITTLE_ENDIAN);
+            this.emitProgress();
+            if (this.prnResolver) {
+                const resolve = this.prnResolver;
+                this.prnResolver = null;
+                resolve();
+            }
+            return;
+        }
+
         if (OPERATIONS.RESPONSE.indexOf(view.getUint8(0)) < 0) {
-            throw new Error("Unrecognised control characteristic response notification");
+            throw new Error("Unrecognised control response");
         }
 
         const operation = view.getUint8(1);
@@ -258,93 +224,65 @@ export class SecureDfu extends EventDispatcher {
             let error = null;
 
             if (result === 0x01) {
-                const data = new DataView(view.buffer, 3);
-                this.notifyFns[operation].resolve(data);
-            } else if (result === 0x0B) {
-                const code = view.getUint8(3);
-                error = `Error: ${EXTENDED_ERROR[code]}`;
+                this.notifyFns[operation].resolve(new DataView(view.buffer, 3));
             } else {
-                error = `Error: ${RESPONSE[result]}`;
+                const msg = (result === 0x0B) ? EXTENDED_ERROR[view.getUint8(3)] : RESPONSE[result];
+                error = `Error 0x${result.toString(16)}: ${msg}`;
             }
 
             if (error) {
-                this.log(`notify: ${error}`);
+                this.log(error);
                 this.notifyFns[operation].reject(error);
             }
-
             delete this.notifyFns[operation];
         }
     }
 
-    private sendOperation(characteristic: BluetoothRemoteGATTCharacteristic, operation: Array<number>, buffer?: ArrayBuffer): Promise<DataView> {
-        return new Promise((resolve, reject) => {
-            let size = operation.length;
-            if (buffer) size += buffer.byteLength;
+    private async sendOperation(characteristic: BluetoothRemoteGATTCharacteristic, operation: Array<number>, buffer?: ArrayBuffer): Promise<DataView> {
+        let size = operation.length;
+        if (buffer) size += buffer.byteLength;
+        const value = new Uint8Array(size);
+        value.set(operation);
+        if (buffer) value.set(new Uint8Array(buffer), operation.length);
 
-            const value = new Uint8Array(size);
-            value.set(operation);
-
-            if (buffer) {
-                const data = new Uint8Array(buffer);
-                value.set(data, operation.length);
+        return new Promise(async (resolve, reject) => {
+            this.notifyFns[operation[0]] = { resolve, reject };
+            try {
+                await this.queuedWrite(characteristic, value);
+            } catch (e) {
+                delete this.notifyFns[operation[0]];
+                reject(e);
             }
-
-            this.notifyFns[operation[0]] = {
-                resolve: resolve,
-                reject: reject
-            };
-
-            characteristic.writeValue(value)
-            .catch(e => {
-                this.log(e);
-                return Promise.resolve()
-                    .then(() => this.delayPromise(500))
-                    // Retry once
-                    .then(() => characteristic.writeValue(value));
-            });
         });
     }
 
     private sendControl(operation: Array<number>, buffer?: ArrayBuffer): Promise<DataView> {
-        return new Promise((resolve, reject) => {
-            this.sendOperation(this.controlChar, operation, buffer)
-            .then(resp => {
-                setTimeout(() => resolve(resp), this.delay);
-            }).catch(err => {
-                reject(err);
-            });
-        });
-    }
-
-    private transferInit(buffer: ArrayBuffer): Promise<DataView> {
-        return this.transfer(buffer, "init", OPERATIONS.SELECT_COMMAND, OPERATIONS.CREATE_COMMAND);
-    }
-
-    private transferFirmware(buffer: ArrayBuffer): Promise<DataView> {
-        return this.transfer(buffer, "firmware", OPERATIONS.SELECT_DATA, OPERATIONS.CREATE_DATA);
+        return this.sendOperation(this.controlChar, operation, buffer)
+            .then(resp => new Promise(resolve => setTimeout(() => resolve(resp), this.delay)));
     }
 
     private transfer(buffer: ArrayBuffer, type: string, selectType: Array<number>, createType: Array<number>): Promise<DataView> {
-        return this.sendControl(selectType)
-        .then(response => {
-
+        return this.sendControl(selectType).then(response => {
             const maxSize = response.getUint32(0, LITTLE_ENDIAN);
-            const offset = response.getUint32(4, LITTLE_ENDIAN);
+            let offset = response.getUint32(4, LITTLE_ENDIAN);
             const crc = response.getInt32(8, LITTLE_ENDIAN);
 
-            if (type === "init" && offset === buffer.byteLength && this.checkCrc(buffer, crc)) {
+            if (this.forceRestart && offset > 0) {
+                this.log(`Restarting: Clearing ${offset} existing bytes.`);
+                offset = 0;
+            } else if (type === "init" && offset === buffer.byteLength && this.checkCrc(buffer, crc)) {
                 this.log("init packet already available, skipping transfer");
                 return;
+            } else if (offset === 0) {
+                this.log(`Starting fresh transfer (offset 0).`);
             }
 
-            this.progress = bytes => {
-                this.dispatchEvent(SecureDfu.EVENT_PROGRESS, {
-                    object: type,
-                    totalBytes: buffer.byteLength,
-                    currentBytes: bytes
-                });
-            };
-            this.progress(0);
+            this.currentObjectType = type;
+            this.totalBytes = buffer.byteLength;
+            this.sentBytes = offset;
+            this.validatedBytes = offset;
+            this.packetsSentSincePRN = 0;
+            this.emitProgress();
 
             return this.transferObject(buffer, createType, maxSize, offset);
         });
@@ -353,209 +291,91 @@ export class SecureDfu extends EventDispatcher {
     private transferObject(buffer: ArrayBuffer, createType: Array<number>, maxSize: number, offset: number): Promise<DataView> {
         const start = offset - offset % maxSize;
         const end = Math.min(start + maxSize, buffer.byteLength);
-
         const view = new DataView(new ArrayBuffer(4));
         view.setUint32(0, end - start, LITTLE_ENDIAN);
 
         return this.sendControl(createType, view.buffer)
-        .then(() => {
-            const data = buffer.slice(start, end);
-            return this.transferData(data, start);
-        })
-        .then(() => {
-            return this.sendControl(OPERATIONS.CACULATE_CHECKSUM);
-        })
+        .then(() => this.transferData(buffer.slice(start, end), start))
+        .then(() => this.sendControl(OPERATIONS.CACULATE_CHECKSUM))
         .then(response => {
             const crc = response.getInt32(4, LITTLE_ENDIAN);
             const transferred = response.getUint32(0, LITTLE_ENDIAN);
-            const data = buffer.slice(0, transferred);
-
-            if (this.checkCrc(data, crc)) {
+            if (this.checkCrc(buffer.slice(0, transferred), crc)) {
                 this.log(`written ${transferred} bytes`);
-                offset = transferred;
+                this.validatedBytes = transferred;
+                this.emitProgress();
                 return this.sendControl(OPERATIONS.EXECUTE);
             } else {
-                this.log("object failed to validate");
+                throw new Error(`CRC fail at ${transferred}`);
             }
         })
-        .then(() => {
-            if (end < buffer.byteLength) {
-                return this.transferObject(buffer, createType, maxSize, offset);
-            } else {
-                this.log("transfer complete");
-            }
-        });
+        .then(() => (end < buffer.byteLength) ? this.transferObject(buffer, createType, maxSize, end) : this.log("transfer complete"));
     }
 
-    private transferData(data: ArrayBuffer, offset: number, start?: number) {
-        start = start || 0;
-        const end = Math.min(start + PACKET_SIZE, data.byteLength);
+    private async transferData(data: ArrayBuffer, offset: number, start: number = 0) {
+        const end = Math.min(start + this.packetSize, data.byteLength);
         const packet = data.slice(start, end);
 
-        return this.packetChar.writeValue(packet)
-        .then(() => this.delayPromise(this.delay))
-        .then(() => {
-            this.progress(offset + end);
+        if (this.packetReceiptNotification > 0 && this.packetsSentSincePRN >= this.packetReceiptNotification) {
+            await new Promise<void>(resolve => {
+                this.prnResolver = resolve;
+                setTimeout(() => { if (this.prnResolver) { this.prnResolver = null; resolve(); } }, 3000);
+            });
+            this.packetsSentSincePRN = 0;
+        }
 
-            if (end < data.byteLength) {
-                return this.transferData(data, offset, end);
-            }
-        });
+        await this.queuedWrite(this.packetChar, packet);
+        this.packetsSentSincePRN++;
+        
+        if (this.delay > 0) await new Promise(r => setTimeout(r, this.delay));
+        
+        this.sentBytes = offset + end;
+        this.emitProgress();
+        
+        if (end < data.byteLength) {
+            return this.transferData(data, offset, end);
+        }
     }
 
     private checkCrc(buffer: ArrayBuffer, crc: number): boolean {
-        if (!this.crc32) {
-            this.log("crc32 not found, skipping CRC check");
-            return true;
-        }
-
-        return crc === this.crc32(new Uint8Array(buffer));
+        return crc === this.crc32Impl(new Uint8Array(buffer));
     }
 
-    private delayPromise(delay: number) {
-        return new Promise(resolve => {
-            setTimeout(resolve, delay);
-        });
+    public requestDevice(buttonLess: boolean, filters: any, uuids: UuidOptions = this.DEFAULT_UUIDS): Promise<BluetoothDevice> {
+        uuids = { ...this.DEFAULT_UUIDS, ...uuids };
+        const options: any = { optionalServices: [ uuids.service ] };
+        if (filters) options.filters = filters; else options.acceptAllDevices = true;
+        return this.bluetooth.requestDevice(options).then(device => buttonLess ? this.setDfuMode(device, uuids) : device);
     }
 
-    /**
-     * Scans for a device to update
-     * @param buttonLess Scans for all devices and will automatically call `setDfuMode`
-     * @param filters Alternative filters to use when scanning
-     * @param uuids Optional alternative uuids for service, control, packet or button
-     * @returns Promise containing the device
-     */
-    public requestDevice(buttonLess: boolean, filters: Array<BluetoothLEScanFilterInit>, uuids: UuidOptions = this.DEFAULT_UUIDS): Promise<BluetoothDevice> {
-        uuids = {
-            ...this.DEFAULT_UUIDS,
-            ...uuids
-        };
-
-        if (!buttonLess && !filters) {
-            filters = [ { services: [ uuids.service ] } ];
-        }
-
-        const options: any = {
-            optionalServices: [ uuids.service ]
-        };
-
-        if (filters) options.filters = filters;
-        else options.acceptAllDevices = true;
-
-        return this.bluetooth.requestDevice(options)
-        .then(device => {
-            if (buttonLess) {
-                return this.setDfuMode(device, uuids);
-            }
-            return device;
-        });
-    }
-
-    /**
-     * Sets the DFU mode of a device, preparing it for update
-     * @param device The device to switch mode
-     * @param uuids Optional alternative uuids for control, packet or button
-     * @returns Promise containing the device if it is still on a valid state
-     */
     public setDfuMode(device: BluetoothDevice, uuids: UuidOptions = this.DEFAULT_UUIDS): Promise<BluetoothDevice> {
-        uuids = {
-            ...this.DEFAULT_UUIDS,
-            ...uuids
-        };
-
-        return this.gattConnect(device, uuids.service)
-        .then(characteristics => {
-            this.log(`found ${characteristics.length} characteristic(s)`);
-
-            const controlChar = characteristics.find(characteristic => {
-                return (characteristic.uuid === uuids.control);
-            });
-
-            const packetChar = characteristics.find(characteristic => {
-                return (characteristic.uuid === uuids.packet);
-            });
-
-            if (controlChar && packetChar) {
-                return device;
-            }
-
-            const buttonChar = characteristics.find(characteristic => {
-                return (characteristic.uuid === uuids.button);
-            });
-
-            if (!buttonChar) {
-                throw new Error("Unsupported device");
-            }
-
-            // Support buttonless devices
-            this.log("found buttonless characteristic");
-            if (!buttonChar.properties.notify && !buttonChar.properties.indicate) {
-                throw new Error("Buttonless characteristic does not allow notifications");
-            }
-
-            return new Promise<BluetoothDevice>((resolve, _reject) => {
-
-                function complete() {
-                    this.notifyFns = {};
-                    // Resolve with null device as it needs reconnecting
-                    resolve(null);
-                }
-
-                buttonChar.startNotifications()
-                .then(() => {
-                    this.log("enabled buttonless notifications");
-
-                    device.addEventListener("gattserverdisconnected", complete.bind(this));
-                    buttonChar.addEventListener("characteristicvaluechanged", this.handleNotification.bind(this));
-
+        uuids = { ...this.DEFAULT_UUIDS, ...uuids };
+        return this.gattConnect(device, uuids.service).then(characteristics => {
+            const buttonChar = characteristics.find(c => c.uuid === uuids.button);
+            if (!buttonChar) return (characteristics.find(c => c.uuid === uuids.control) && characteristics.find(c => c.uuid === uuids.packet)) ? device : Promise.reject("Unsupported");
+            return new Promise<BluetoothDevice>(resolve => {
+                const complete = () => { this.notifyFns = {}; resolve(null); };
+                buttonChar.startNotifications().then(() => {
+                    device.addEventListener("gattserverdisconnected", complete, false);
+                    buttonChar.addEventListener("characteristicvaluechanged", this.handleNotification.bind(this), false);
                     return this.sendOperation(buttonChar, OPERATIONS.BUTTON_COMMAND);
-                })
-                .then(() => {
-                    this.log("sent DFU mode");
-                    complete.call(this);
-                });
+                }).then(() => complete());
             });
         });
     }
 
-    /**
-     * Updates a device
-     * @param device The device to switch mode
-     * @param init The initialisation packet to send
-     * @param firmware The firmware to update
-     * @returns Promise containing the device
-     */
     public update(device: BluetoothDevice, init: ArrayBuffer, firmware: ArrayBuffer): Promise<BluetoothDevice> {
-        return new Promise((resolve, reject) => {
-            if (!device) return reject("Device not specified");
-            if (!init) return reject("Init not specified");
-            if (!firmware) return reject("Firmware not specified");
-
-            this.connect(device)
+        return this.connect(device)
+            .then(() => this.transfer(init, "init", OPERATIONS.SELECT_COMMAND, OPERATIONS.CREATE_COMMAND))
+            .then(() => new Promise(r => setTimeout(r, 500))) // Wait after init
+            .then(() => this.transfer(firmware, "firmware", OPERATIONS.SELECT_DATA, OPERATIONS.CREATE_DATA))
             .then(() => {
-                this.log("transferring init");
-                return this.transferInit(init);
-            })
-            .then(() => {
-                this.log("transferring firmware");
-                return this.transferFirmware(firmware);
-            })
-            .then(() => {
-                this.log("complete, disconnecting...");
-
-                device.addEventListener("gattserverdisconnected", () => {
-                    this.log("disconnected");
-                    resolve(device);
+                this.log("disconnecting...");
+                return new Promise(resolve => {
+                    const t = setTimeout(() => resolve(device), 5000);
+                    device.addEventListener("gattserverdisconnected", () => { clearTimeout(t); resolve(device); }, false);
+                    device.gatt.disconnect();
                 });
-            })
-            .catch(error => {
-                if (this.delay === 0) {
-                    this.log("DFU update failed, but delay=0. Trying again with delay=10...");
-                    this.delay = 10;
-                    return this.update(device, init, firmware);
-                }
-                reject(error);
             });
-        });
     }
 }

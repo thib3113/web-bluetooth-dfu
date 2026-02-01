@@ -1,9 +1,22 @@
-# Web Bluetooth DFU
+# Web Bluetooth DFU (Enhanced Fork)
 
-[![Circle CI](https://img.shields.io/circleci/project/thegecko/web-bluetooth-dfu.svg)](https://circleci.com/gh/thegecko/web-bluetooth-dfu)
-[![Bower](https://img.shields.io/bower/v/web-bluetooth-dfu.svg)](http://bower.io/search/?q=web-bluetooth-dfu)
-[![npm](https://img.shields.io/npm/dm/web-bluetooth-dfu.svg)](https://www.npmjs.com/package/web-bluetooth-dfu)
-[![Licence MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](http://opensource.org/licenses/MIT)
+This repository is a fork of the original `web-bluetooth-dfu` library, specifically enhanced to provide robust support for **nRF52811** and **nRF52833** devices. It introduces a modernized build system and critical stability fixes for production environments.
+
+### 🚀 Key Improvements
+
+*   **Modern Build System:** Updated to **esbuild** and **TypeScript 5**, providing a streamlined development experience and better tree-shaking.
+*   **Reliable Data Transfer:**
+    *   **Strict CRC Validation:** Immediate termination on validation failure to prevent firmware corruption.
+    *   **Packet Receipt Notifications (PRN):** Full implementation of PRN intervals (Opcode 0x02) for flow control.
+*   **GATT Stability:** Integrated a **GATT Mutex** to serialize write operations, effectively eliminating "GATT operation already in progress" errors.
+*   **Simplified Deployment:** Generates a standalone `dist/secure-dfu.js` bundle including all dependencies (JSZip, CRC32), ready for direct browser usage.
+*   **Advanced Progress Tracking:** Events now provide granular feedback, reporting both "Sent" and "Validated" byte counts.
+
+*Tested and verified on nRF52811 and nRF52833 using stock Nordic bootloaders.*
+
+---
+
+# Web Bluetooth DFU (Original Readme)
 
 Update device firmware via Nordic's DFU protocols using [Web Bluetooth](https://webbluetoothcg.github.io/web-bluetooth/).
 
@@ -26,7 +39,7 @@ Earlier protocols were insecure, so it is recommended to use the secure protocol
 
 This repo has a live web example of the secure DFU. Open this site in a [Web Bluetooth](https://webbluetoothcg.github.io/web-bluetooth/) enabled browser:
 
-https://thegecko.github.io/web-bluetooth-dfu/
+https://thib3113.github.io/web-bluetooth-dfu/
 
  - Supports drag-and-drop or uploading of firmware packages
  - Supports unzipping of the firmware package in-browser
@@ -34,13 +47,44 @@ https://thegecko.github.io/web-bluetooth-dfu/
 
 ## Prerequisites
 
-[Node.js > v8.14.0](https://nodejs.org), which includes `npm`.
+*   [Node.js](https://nodejs.org) v18 or newer.
+*   A browser with **Web Bluetooth** support (Chrome, Edge, Opera).
 
 ## Installation
 
-The package is distributed using npm. To install the package in your project:
+```bash
+npm install @thib3113/web-bluetooth-dfu
+```
 
-    $ npm install web-bluetooth-dfu
+## Building
+
+If you are contributing or want to build the bundles yourself:
+
+```bash
+npm install
+npm run build
+```
+The output will be in the `dist/` folder.
+
+## Usage
+
+### In the Browser (CDN / Script Tag)
+
+You can use the standalone bundle which includes all dependencies:
+
+```html
+<script src="https://unpkg.com/@thib3113/web-bluetooth-dfu/dist/secure-dfu.js"></script>
+<script>
+    const dfu = new SecureDfu(); // No need to pass CRC32 anymore
+    // ...
+</script>
+```
+
+### In a Module System (ESM / TypeScript)
+
+```typescript
+import { SecureDfu, SecureDfuPackage } from '@thib3113/web-bluetooth-dfu';
+```
 
 ## Device Configuration
 
@@ -54,7 +98,7 @@ Softdevices can be found on Nordic's site:
 
 Upon flashing the device will be in bootloader mode and ready to receive a DFU transfer.
 
-Example packages to update can be found in the [firmware](https://github.com/thegecko/web-bluetooth-dfu/tree/master/firmware) folder.
+Example packages to update can be found in the [firmware](https://github.com/thib3113/web-bluetooth-dfu/tree/main/firmware) folder.
 
 ## Device Development
 

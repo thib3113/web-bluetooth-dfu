@@ -1,0 +1,43 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Compare npm with local (versions)
+        uses: rbatty19/compare-npm-versions-ci@master
+        id: package_version
+        continue-on-error: true
+        with:
+          path: .
+          npm_package_name: "@thib3113/web-bluetooth-dfu"
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish to NPM
+        if: steps.package_version.outputs.npm_is_greater != 'true'
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
