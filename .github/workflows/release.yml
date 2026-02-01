@@ -16,18 +16,10 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: ./.github/actions/setup-node
         with:
-          node-version: lts/*
-          registry-url: 'https://registry.npmjs.org'
-      - name: Update npm
-        shell: bash
-        run: |
-          npm i -g npm@latest
-          npm --version
-          npm install
-        env:
-          CI: true
+          NODE_VERSION: lts/*
+          REGISTRY_URL: 'https://registry.npmjs.org'
       - run: npm publish
         name: publish on npm
 
@@ -38,14 +30,11 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: ./.github/actions/setup-node
         with:
-          node-version: lts/*
-          registry-url: 'https://npm.pkg.github.com'
-          scope: ${{ github.repository_owner }}
-      - run: npm install
-        env:
-          CI: true
+          NODE_VERSION: lts/*
+          REGISTRY_URL: 'https://npm.pkg.github.com'
+          SCOPE: ${{ github.repository_owner }}
       - run: npx npe name @${{ github.event.repository.full_name }}
         name: change scope name
       - run: npm publish --access public --registry https://npm.pkg.github.com
