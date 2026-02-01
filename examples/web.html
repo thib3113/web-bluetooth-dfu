@@ -81,10 +81,7 @@
         </svg>
     </a>
 
-    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/crc-32/1.0.2/crc32.min.js"></script>
-    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.1.3/jszip.min.js"></script>
-    <script src="./package.js"></script>
-    <script src="../dist/secure-dfu.js"></script>
+    <script src="https://unpkg.com/@thib3113/web-bluetooth-dfu/dist/secure-dfu.js"></script>
 
     <script>
         let dropEl = document.getElementById("drop");
@@ -135,7 +132,7 @@
             setStatus("Selecting device...");
             setTransfer();
 
-            const dfu = new SecureDfu(CRC32.buf);
+            const dfu = new SecureDfu();
             dfu.addEventListener("log", event => {
                 console.log(event.message);
             });
