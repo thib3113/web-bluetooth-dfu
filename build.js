@@ -1,5 +1,9 @@
 import * as esbuild from 'esbuild';
 import fs from 'fs/promises';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 async function build() {
     console.log('🚀 Starting Universal Build...');
@@ -48,6 +52,17 @@ async function build() {
         format: 'cjs',
         packages: 'external', // Auto-exclude dependencies
     });
+
+    // 4. Type Definitions
+    console.log('📝 Generating Type Definitions...');
+    try {
+        await execAsync('npx tsc');
+    } catch (err) {
+        console.error('❌ Type generation failed:', err.stdout || err.message);
+        // We don't necessarily want to fail the whole build if just types have issues, 
+        // but for a library it's usually better to be strict.
+        throw err;
+    }
 
     console.log('✅ Build complete! Output in /dist');
 }

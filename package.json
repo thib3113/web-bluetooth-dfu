@@ -9,10 +9,13 @@
   "publishConfig": {
     "access": "public"
   },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "main": "dist/secure-dfu.cjs",
   "module": "dist/secure-dfu.mjs",
-  "types": "src/index.ts",
+  "types": "dist/types/index.d.ts",
   "exports": {
     ".": {
       "import": "./dist/secure-dfu.mjs",

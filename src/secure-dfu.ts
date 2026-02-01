@@ -261,7 +261,7 @@ export class SecureDfu extends EventDispatcher {
             .then(resp => new Promise(resolve => setTimeout(() => resolve(resp), this.delay)));
     }
 
-    private transfer(buffer: ArrayBuffer, type: string, selectType: Array<number>, createType: Array<number>): Promise<DataView> {
+    private transfer(buffer: ArrayBuffer, type: string, selectType: Array<number>, createType: Array<number>): Promise<void> {
         return this.sendControl(selectType).then(response => {
             const maxSize = response.getUint32(0, LITTLE_ENDIAN);
             let offset = response.getUint32(4, LITTLE_ENDIAN);
@@ -288,7 +288,7 @@ export class SecureDfu extends EventDispatcher {
         });
     }
 
-    private transferObject(buffer: ArrayBuffer, createType: Array<number>, maxSize: number, offset: number): Promise<DataView> {
+    private transferObject(buffer: ArrayBuffer, createType: Array<number>, maxSize: number, offset: number): Promise<void> {
         const start = offset - offset % maxSize;
         const end = Math.min(start + maxSize, buffer.byteLength);
         const view = new DataView(new ArrayBuffer(4));
@@ -309,7 +309,12 @@ export class SecureDfu extends EventDispatcher {
                 throw new Error(`CRC fail at ${transferred}`);
             }
         })
-        .then(() => (end < buffer.byteLength) ? this.transferObject(buffer, createType, maxSize, end) : this.log("transfer complete"));
+        .then(() => {
+            if (end < buffer.byteLength) {
+                return this.transferObject(buffer, createType, maxSize, end);
+            }
+            this.log("transfer complete");
+        });
     }
 
     private async transferData(data: ArrayBuffer, offset: number, start: number = 0) {
