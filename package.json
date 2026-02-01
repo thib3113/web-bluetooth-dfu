@@ -26,17 +26,24 @@
   "unpkg": "dist/secure-dfu.js",
   "jsdelivr": "dist/secure-dfu.js",
   "scripts": {
-    "build": "node build.js"
+    "build": "node build.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "crc-32": "^1.2.0",
     "jszip": "^3.10.1"
   },
   "devDependencies": {
+    "@types/jsdom": "^27.0.0",
     "@types/node": "^20.0.0",
     "@types/web-bluetooth": "^0.0.20",
+    "@vitest/coverage-v8": "^4.0.18",
     "esbuild": "^0.20.0",
-    "typescript": "^5.3.0"
+    "jsdom": "^27.4.0",
+    "typescript": "^5.3.0",
+    "vitest": "^4.0.18"
   },
   "author": "Rob Moran (Forked by Thib3113)",
   "license": "MIT"
