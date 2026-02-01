@@ -5,3 +5,4 @@ dist
 lib
 types
 npm-debug.log
+coverage
