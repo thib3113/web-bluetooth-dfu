@@ -1,6 +1,6 @@
 {
   "name": "@thib3113/web-bluetooth-dfu",
-  "version": "2.1.0",
+  "version": "2.0.0",
   "description": "Fork of Web Bluetooth DFU for Nordic Semiconductors with stability and performance fixes",
   "repository": {
     "type": "git",
