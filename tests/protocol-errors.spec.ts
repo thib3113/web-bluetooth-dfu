@@ -36,7 +36,7 @@ describe('Protocol Errors', () => {
         await pack.load();
         const image = await pack.getAppImage();
 
-        const device = await secureDfu.requestDevice(true, null);
+        const device = await secureDfu.requestDevice(false, null);
 
         // Should reject with specific error message
         await expect(secureDfu.update(device, image.initData, image.imageData))
@@ -58,7 +58,7 @@ describe('Protocol Errors', () => {
         await pack.load();
         const image = await pack.getAppImage();
 
-        const device = await secureDfu.requestDevice(true, null);
+        const device = await secureDfu.requestDevice(false, null);
 
         await expect(secureDfu.update(device, image.initData, image.imageData))
             .rejects.toThrow(/Insufficient space/);
@@ -82,7 +82,7 @@ describe('Protocol Errors', () => {
         await pack.load();
         const image = await pack.getAppImage();
 
-        const device = await secureDfu.requestDevice(true, null);
+        const device = await secureDfu.requestDevice(false, null);
 
         await expect(secureDfu.update(device, image.initData, image.imageData))
             .rejects.toThrow(/CRC fail/);

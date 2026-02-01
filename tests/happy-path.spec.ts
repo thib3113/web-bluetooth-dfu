@@ -39,7 +39,8 @@ describe('SecureDfu Happy Path', () => {
         secureDfu.addEventListener('progress', progressSpy);
 
         // 3. Request device (simulated selection)
-        const device = await secureDfu.requestDevice(true, null);
+        // Note: buttonLess=false because our mock is already in DFU mode (has Packet/Control chars)
+        const device = await secureDfu.requestDevice(false, null);
         expect(device).toBe(mockDevice.device);
 
         // 4. Start Update

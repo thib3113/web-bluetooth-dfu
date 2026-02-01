@@ -29,7 +29,7 @@ describe('MTU Constraints', () => {
         await pack.load();
         const image = await pack.getAppImage();
 
-        const device = await secureDfu.requestDevice(true, null);
+        const device = await secureDfu.requestDevice(false, null);
         await secureDfu.update(device, image.initData, image.imageData);
 
         expect(mockDevice.flashStorage.firmware).toBeDefined();
@@ -47,7 +47,7 @@ describe('MTU Constraints', () => {
         await pack.load();
         const image = await pack.getAppImage();
 
-        const device = await secureDfu.requestDevice(true, null);
+        const device = await secureDfu.requestDevice(false, null);
 
         // Expect write failure
         await expect(secureDfu.update(device, image.initData, image.imageData))

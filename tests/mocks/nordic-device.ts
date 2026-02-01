@@ -4,8 +4,10 @@ import * as CRC32 from 'crc-32';
 const SERVICE_UUID = 0xFE59;
 const CONTROL_UUID = "8ec90001-f315-4f60-9fb8-838830daea50";
 const PACKET_UUID = "8ec90002-f315-4f60-9fb8-838830daea50";
+const BUTTON_UUID = "8ec90003-f315-4f60-9fb8-838830daea50";
 
 const OPCODES = {
+    BUTTON_COMMAND: 0x01,
     CREATE: 0x01,
     SET_PRN: 0x02,
     CALCULATE_CHECKSUM: 0x03,
@@ -50,6 +52,7 @@ export class NordicDfuDevice {
     private service: MockBluetoothRemoteGATTService;
     private controlChar: MockBluetoothRemoteGATTCharacteristic;
     private packetChar: MockBluetoothRemoteGATTCharacteristic;
+    private buttonChar: MockBluetoothRemoteGATTCharacteristic;
 
     private config: DfuConfig;
 
@@ -95,6 +98,11 @@ export class NordicDfuDevice {
             write: true
         });
 
+        this.buttonChar = this.service.addCharacteristic(BUTTON_UUID, {
+            notify: true,
+            write: true
+        });
+
         // Hook into writes
         const originalControlWrite = this.controlChar.writeValue.bind(this.controlChar);
         this.controlChar.writeValue = async (val) => {
@@ -109,6 +117,13 @@ export class NordicDfuDevice {
             await originalPacketWrite(val);
             this.handlePacketWrite(val);
         };
+
+        const originalButtonWrite = this.buttonChar.writeValue.bind(this.buttonChar);
+        this.buttonChar.writeValue = async (val) => {
+             await this.simulateDelayAndError();
+             await originalButtonWrite(val);
+             this.handleButtonWrite(val);
+        }
     }
 
     public setConfig(config: Partial<DfuConfig>) {
@@ -167,6 +182,10 @@ export class NordicDfuDevice {
                 if (this.currentObject && this.currentObject.type === type) {
                     offset = this.currentObject.offset;
                     crc = this.currentObject.crc;
+                } else if (type === 0x01 && this.flashStorage.initPacket) {
+                    // If Init packet is already stored, report it
+                    offset = this.flashStorage.initPacket.byteLength;
+                    crc = CRC32.buf(this.flashStorage.initPacket);
                 }
 
                 const responsePayload = new Uint8Array(12);
@@ -297,6 +316,35 @@ export class NordicDfuDevice {
             // the library hasn't set up the listener promise yet.
             setTimeout(() => this.sendChecksumNotification(), 10);
             this.packetsReceivedSincePrn = 0;
+        }
+    }
+
+    private handleButtonWrite(value: BufferSource) {
+        let data: DataView;
+        if (value instanceof DataView) data = value;
+        else if (value instanceof ArrayBuffer) data = new DataView(value);
+        else data = new DataView(value.buffer);
+
+        const opcode = data.getUint8(0);
+        if (opcode === OPCODES.BUTTON_COMMAND) {
+             // Simulate Success response
+             const responsePayload = new Uint8Array(3);
+             const view = new DataView(responsePayload.buffer);
+             view.setUint8(0, 0x20); // Response Opcode
+             view.setUint8(1, OPCODES.BUTTON_COMMAND);
+             view.setUint8(2, RESULT.SUCCESS);
+
+             // In Buttonless mode, the device usually disconnects shortly after this command
+             // to switch to Bootloader mode.
+             this.buttonChar.value = view;
+             const event = new Event('characteristicvaluechanged');
+             Object.defineProperty(event, 'target', { value: { value: view } });
+             this.buttonChar.dispatchEvent(event);
+
+             // Trigger disconnect
+             setTimeout(() => {
+                 this.device.gatt?.disconnect();
+             }, 50);
         }
     }
 

@@ -32,7 +32,7 @@ describe('Chip Variants (Performance & Constraints)', () => {
         await pack.load();
         const image = await pack.getAppImage();
 
-        const device = await secureDfu.requestDevice(true, null);
+        const device = await secureDfu.requestDevice(false, null);
         await secureDfu.update(device, image.initData, image.imageData);
 
         // Verify it succeeded
@@ -55,7 +55,7 @@ describe('Chip Variants (Performance & Constraints)', () => {
         await pack.load();
         const image = await pack.getAppImage();
 
-        const device = await secureDfu.requestDevice(true, null);
+        const device = await secureDfu.requestDevice(false, null);
         await secureDfu.update(device, image.initData, image.imageData);
 
         expect(mockDevice.flashStorage.firmware).toBeDefined();
@@ -75,7 +75,7 @@ describe('Chip Variants (Performance & Constraints)', () => {
         await pack.load();
         const image = await pack.getAppImage();
 
-        const device = await secureDfu.requestDevice(true, null);
+        const device = await secureDfu.requestDevice(false, null);
 
         const startTime = Date.now();
         await secureDfu.update(device, image.initData, image.imageData);

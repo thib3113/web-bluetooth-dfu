@@ -30,7 +30,7 @@ describe('Resilience & Flow Control', () => {
         await pack.load();
         const image = await pack.getAppImage();
 
-        const device = await secureDfu.requestDevice(true, null);
+        const device = await secureDfu.requestDevice(false, null);
 
         // The library has a retry mechanism (15 attempts).
         // With 0.1 flakiness, it should eventually succeed.
@@ -56,7 +56,7 @@ describe('Resilience & Flow Control', () => {
         await pack.load();
         const image = await pack.getAppImage();
 
-        const device = await secureDfu.requestDevice(true, null);
+        const device = await secureDfu.requestDevice(false, null);
         await secureDfu.update(device, image.initData, image.imageData);
 
         // Verification: The update succeeded, meaning PRN flow control worked.
@@ -80,7 +80,7 @@ describe('Resilience & Flow Control', () => {
         await pack.load();
         const image = await pack.getAppImage();
 
-        const device = await secureDfu.requestDevice(true, null);
+        const device = await secureDfu.requestDevice(false, null);
 
         // 1. Interrupt halfway
         // We can hook into the mock to throw error after N bytes
@@ -113,17 +113,25 @@ describe('Resilience & Flow Control', () => {
         // 2. Resume
         // Restore write function
         mockDevice['packetChar'].writeValue = originalWrite;
-        // Re-connect (mock device needs to be "connectable" again)
-        // In our mock, disconnect sets connected=false. Connect sets it true.
 
-        // Create new DFU instance or reuse? Reuse is fine.
-        // Call update again with SAME device object (simulating re-finding same device)
+        // Spy on writeValue to count bytes sent during RESUME
+        let bytesSentDuringResume = 0;
+        const spyWrite = vi.spyOn(mockDevice['packetChar'], 'writeValue').mockImplementation(async (val) => {
+             bytesSentDuringResume += val.byteLength;
+             return originalWrite(val);
+        });
+
+        // Call update again with SAME device object
         await secureDfu.update(device, image.initData, image.imageData);
 
         expect(mockDevice.flashStorage.firmware).toBeDefined();
         expect(mockDevice.flashStorage.firmware!.byteLength).toBe(4096);
 
-        // Verify we actually skipped bytes?
-        // Hard to check directly without spying on "sentBytes" in progress event.
+        // We interrupted at > 2000. Total 4096 (1 object).
+        // The library resumes from the *start* of the current object, so it re-sends the full 4096 bytes of firmware.
+        // However, it skips the Init Packet (64 bytes), which proves Smart Resume is working (skipping completed steps).
+        // If it didn't skip Init, we would see 4096 + 64 = 4160 bytes.
+
+        expect(bytesSentDuringResume).toBe(4096);
     });
 });
