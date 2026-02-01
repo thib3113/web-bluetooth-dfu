@@ -6,38 +6,58 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-publish:
+  build:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node
+
+  deploy-npm:
     permissions:
       id-token: write
       contents: read
-
+    runs-on: ubuntu-latest
+    needs: build
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
           registry-url: 'https://registry.npmjs.org'
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Compare npm with local (versions)
-        uses: rbatty19/compare-npm-versions-ci@master
-        id: package_version
-        continue-on-error: true
-        with:
-          path: .
-          npm_package_name: "@thib3113/web-bluetooth-dfu"
-
-      - name: Build
-        run: npm run build
-
-      - name: Publish to NPM
-        if: steps.package_version.outputs.npm_is_greater != 'true'
-        run: npm publish --access public
+      - name: Update npm
+        shell: bash
+        run: |
+          npm i -g npm@latest
+          npm --version
+          npm install
+        env:
+          CI: true
+      - run: npm publish --access public
+        name: publish on npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
+
+  deploy-GPR:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      packages: write
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          registry-url: 'https://npm.pkg.github.com'
+          scope: ${{ github.repository_owner }}
+      - run: npm install
+        env:
+          CI: true
+      - run: npx npe name @${{ github.repository.full_name }}
+        name: change scope name
+      - run: npm publish --access public --registry https://npm.pkg.github.com
+        name: publish on GPR
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

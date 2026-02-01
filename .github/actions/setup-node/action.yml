@@ -1,0 +1,47 @@
+name: 'setup nodejs'
+description: 'Sets up Node.js, installs dependencies, and builds the project'
+
+inputs:
+  NODE_VERSION:
+    description: "the node version"
+    required: false
+    default: 'lts/*'
+  WORKING_DIRECTORY:
+    description: "The directory to run install and build steps in"
+    required: false
+    default: '.'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Node.js
+      uses: actions/setup-node@v4
+      with:
+        registry-url: 'https://registry.npmjs.org'
+        node-version: ${{ inputs.NODE_VERSION }}
+
+    - name: Update npm
+      shell: bash
+      run: |
+        npm i -g npm@latest
+        npm --version
+
+    - name: Setup npm cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.npm
+        key: ${{ runner.os }}-node-${{ hashFiles(format('{0}/package-lock.json', inputs.WORKING_DIRECTORY)) }}
+        restore-keys: |
+          ${{ runner.os }}-node-
+
+    - name: Install dependencies
+      shell: bash
+      run: npm install
+      working-directory: ${{ inputs.WORKING_DIRECTORY }}
+
+    - name: Build project
+      shell: bash
+      run: npm run build
+      working-directory: ${{ inputs.WORKING_DIRECTORY }}
+      env:
+        CI: true
