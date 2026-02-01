@@ -112,6 +112,7 @@ export class SecureDfu extends EventDispatcher {
      */
     public enableSmartSpeed: SmartSpeedConfig = false;
 
+    private retriesAtCurrentSpeed: number = 0;
     private totalBytes: number = 0;
     private sentBytes: number = 0;
     private validatedBytes: number = 0;
@@ -323,6 +324,7 @@ export class SecureDfu extends EventDispatcher {
                 return this.transferObject(buffer, createType, maxSize, end);
             }
             this.log("transfer complete");
+            this.retriesAtCurrentSpeed = 0;
         })
         .catch(async (error) => {
             if (this.calculateSmartSpeed(error.message)) {
@@ -373,6 +375,15 @@ export class SecureDfu extends EventDispatcher {
     private calculateSmartSpeed(error: string): boolean {
         if (!this.enableSmartSpeed) return false;
 
+        this.retriesAtCurrentSpeed++;
+
+        // Retry 3 times at current speed before degrading
+        if (this.retriesAtCurrentSpeed <= 3) {
+            this.log(`Smart Speed: Retrying with same parameters (Attempt ${this.retriesAtCurrentSpeed}/3)`);
+            return true;
+        }
+
+        this.retriesAtCurrentSpeed = 0;
         let newPrn = this.packetReceiptNotification;
         let newSize = this.packetSize;
         let changed = false;
@@ -432,6 +443,7 @@ export class SecureDfu extends EventDispatcher {
     }
 
     public update(device: BluetoothDevice, init: ArrayBuffer, firmware: ArrayBuffer): Promise<BluetoothDevice> {
+        this.retriesAtCurrentSpeed = 0;
         return this.connect(device)
             .then(() => this.transfer(init, "init", OPERATIONS.SELECT_COMMAND, OPERATIONS.CREATE_COMMAND))
             .then(() => new Promise(r => setTimeout(r, 500))) // Wait after init
