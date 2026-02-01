@@ -28,6 +28,8 @@ jobs:
           npm install
         env:
           CI: true
+      - run: npm run build
+        name: build project
       - run: npm publish
         name: publish on npm
 
@@ -46,6 +48,8 @@ jobs:
       - run: npm install
         env:
           CI: true
+      - run: npm run build
+        name: build project
       - run: npx npe name @${{ github.event.repository.full_name }}
         name: change scope name
       - run: npm publish --access public --registry https://npm.pkg.github.com
