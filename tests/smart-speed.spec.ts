@@ -55,7 +55,7 @@ describe('Smart Speed Degradation', () => {
         expect(secureDfu.packetSize).toBe(100);
     });
 
-    it('should reduce MTU first when Smart Speed is enabled', async () => {
+    it('should reduce MTU progressively (100 -> 50) when Smart Speed is enabled', async () => {
         mockDevice = new NordicDfuDevice({
             maxObjectSize: 4096,
             mtu: 512
@@ -88,14 +88,14 @@ describe('Smart Speed Degradation', () => {
 
         await secureDfu.update(device, image.initData, image.imageData);
 
-        // MTU should drop to 20. PRN stays 10 (prioritize MTU fix).
-        expect(secureDfu.packetSize).toBe(20);
+        // MTU should drop to 50 (100 / 2). PRN stays 10.
+        expect(secureDfu.packetSize).toBe(50);
         expect(secureDfu.packetReceiptNotification).toBe(10);
 
         expect(mockDevice.flashStorage.firmware!.byteLength).toBe(2048);
     });
 
-    it('should reduce PRN if MTU is already safe', async () => {
+    it('should reduce PRN if MTU is already at floor (20)', async () => {
         mockDevice = new NordicDfuDevice({
             maxObjectSize: 4096,
             mtu: 512

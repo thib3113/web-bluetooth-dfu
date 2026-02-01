@@ -92,7 +92,7 @@ export class SecureDfu extends EventDispatcher {
      * Packet size for data transfer. Default to 20 for maximum compatibility.
      * Can be increased (e.g., 100) for better performance on modern devices.
      */
-    public packetSize: number = 20;
+    public packetSize: number = 100;
 
     /**
      * PRN interval. Set to 15-20 for good speed.
@@ -387,7 +387,7 @@ export class SecureDfu extends EventDispatcher {
         } else {
             // Default Strategy
             if (newSize > 20) {
-                newSize = 20;
+                newSize = Math.max(20, Math.ceil(newSize / 2));
                 changed = true;
             } else if (newPrn > 1) {
                 newPrn = Math.ceil(newPrn / 2);
