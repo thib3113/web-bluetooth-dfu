@@ -396,9 +396,12 @@ export class SecureDfu extends EventDispatcher {
                 changed = true;
             }
         } else {
-            // Default Strategy
-            if (newSize > 20) {
-                newSize = Math.max(20, Math.ceil(newSize / 2));
+            // Default Strategy with Safe Tiers
+            const SAFE_TIERS = [256, 128, 64, 32, 23];
+            const lowerTier = SAFE_TIERS.find(t => t < newSize);
+
+            if (lowerTier) {
+                newSize = lowerTier;
                 changed = true;
             } else if (newPrn > 1) {
                 newPrn = Math.ceil(newPrn / 2);

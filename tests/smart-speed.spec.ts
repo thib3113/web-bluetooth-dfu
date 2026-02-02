@@ -55,7 +55,7 @@ describe('Smart Speed Degradation', () => {
         expect(secureDfu.packetSize).toBe(100);
     });
 
-    it('should reduce MTU progressively (100 -> 50) when Smart Speed is enabled', async () => {
+    it('should reduce MTU to next safe tier (100 -> 64) when Smart Speed is enabled', async () => {
         mockDevice = new NordicDfuDevice({
             maxObjectSize: 4096,
             mtu: 512
@@ -88,15 +88,11 @@ describe('Smart Speed Degradation', () => {
 
         await secureDfu.update(device, image.initData, image.imageData);
 
-        // It should have failed 4 times.
-        // 1st Fail: Retry 1
-        // 2nd Fail: Retry 2
-        // 3rd Fail: Retry 3
-        // 4th Fail: Degrade -> Success
+        // 4 failures total
         expect(failureCount).toBe(4);
 
-        // MTU should drop to 50 (100 / 2). PRN stays 10.
-        expect(secureDfu.packetSize).toBe(50);
+        // MTU should drop to 64 (Next tier below 100). PRN stays 10.
+        expect(secureDfu.packetSize).toBe(64);
         expect(secureDfu.packetReceiptNotification).toBe(10);
 
         expect(mockDevice.flashStorage.firmware!.byteLength).toBe(2048);
@@ -145,7 +141,7 @@ describe('Smart Speed Degradation', () => {
         expect(mockDevice.flashStorage.firmware!.byteLength).toBe(2048);
     });
 
-    it('should reduce PRN if MTU is already at floor (20)', async () => {
+    it('should reduce PRN if MTU is already at floor (23)', async () => {
         mockDevice = new NordicDfuDevice({
             maxObjectSize: 4096,
             mtu: 512
@@ -154,7 +150,7 @@ describe('Smart Speed Degradation', () => {
 
         secureDfu.enableSmartSpeed = true;
         secureDfu.packetReceiptNotification = 10;
-        secureDfu.packetSize = 20; // Already safe
+        secureDfu.packetSize = 23; // Already lowest tier
 
         const zipBuffer = await createDfuPackage({ firmwareSize: 2048 });
         const pack = new SecureDfuPackage(zipBuffer);
@@ -176,8 +172,9 @@ describe('Smart Speed Degradation', () => {
         await secureDfu.update(device, image.initData, image.imageData);
 
         // PRN should drop (10 -> 5) after 3 retries
+        // MTU remains 23
         expect(secureDfu.packetReceiptNotification).toBe(5);
-        expect(secureDfu.packetSize).toBe(20);
+        expect(secureDfu.packetSize).toBe(23);
 
         expect(mockDevice.flashStorage.firmware!.byteLength).toBe(2048);
     });
