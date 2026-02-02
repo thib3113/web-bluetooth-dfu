@@ -11,8 +11,48 @@ This repository is a fork of the original `web-bluetooth-dfu` library, specifica
 *   **GATT Stability:** Integrated a **GATT Mutex** to serialize write operations, effectively eliminating "GATT operation already in progress" errors.
 *   **Simplified Deployment:** Generates a standalone `dist/secure-dfu.js` bundle including all dependencies (JSZip, CRC32), ready for direct browser usage.
 *   **Advanced Progress Tracking:** Events now provide granular feedback, reporting both "Sent" and "Validated" byte counts.
+*   **Smart Speed:** Automatic degradation of transfer parameters (MTU, PRN) to adapt to unstable connections.
 
 *Tested and verified on nRF52811 and nRF52833 using stock Nordic bootloaders.*
+
+## ⚡ Smart Speed & Reliability
+
+This library includes a **"Smart Speed"** feature designed to maximize performance on modern devices while maintaining reliability on older or unstable connections.
+
+### How it works
+By default, the library starts with aggressive settings:
+*   **MTU (Packet Size):** 100 bytes (up from the standard 20)
+*   **PRN (Packet Receipt Notification):** Disabled (0) or configured by user.
+
+If `enableSmartSpeed` is set to `true`, the library monitors for transmission errors (GATT write failures or CRC mismatches). Upon encountering an error:
+1.  It retries the operation **3 times** with the current settings to rule out transient glitches.
+2.  If errors persist, it **degrades the MTU** to the next safe tier: `[100 -> 64 -> 32 -> 23]`.
+3.  If MTU is already at the minimum (23 bytes), it reduces the **PRN interval** (e.g., from 12 to 6, then 1) to ensure stricter flow control.
+
+This allows the transfer to be fast by default but robust enough to finish even in difficult radio environments.
+
+### Usage
+
+```typescript
+const dfu = new SecureDfu(crc32);
+
+// Enable Smart Speed (Auto Mode)
+dfu.enableSmartSpeed = true;
+
+// Optional: Configure manual starting points
+dfu.packetSize = 100; // Default is 100
+dfu.packetReceiptNotification = 12;
+
+// Or use a custom strategy callback
+dfu.enableSmartSpeed = (error, currentPrn, currentMtu) => {
+    console.warn(`DFU Error: ${error}. Degrading...`);
+    // Return new settings or null to abort
+    return {
+        prn: Math.max(1, Math.floor(currentPrn / 2)),
+        packetSize: 20
+    };
+};
+```
 
 ---
 

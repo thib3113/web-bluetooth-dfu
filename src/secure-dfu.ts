@@ -89,13 +89,21 @@ export class SecureDfu extends EventDispatcher {
     private writeQueue: Promise<any> = Promise.resolve();
 
     /**
-     * Packet size for data transfer. Default to 20 for maximum compatibility.
-     * Can be increased (e.g., 100) for better performance on modern devices.
+     * Packet size for data transfer.
+     *
+     * **Defaults to 100** for better performance on modern devices.
+     * The library will fragment this if the negotiated MTU is lower, or
+     * Smart Speed can automatically reduce it if instability is detected.
      */
     public packetSize: number = 100;
 
     /**
-     * PRN interval. Set to 15-20 for good speed.
+     * Packet Receipt Notification (PRN) interval.
+     *
+     * Defines how many packets are sent before waiting for a confirmation from the device.
+     * - `0`: Disabled (Fastest, but riskier flow control).
+     * - `10-12`: Balanced.
+     * - `1`: Slowest, most robust.
      */
     public packetReceiptNotification: number = 0;
 
@@ -107,8 +115,14 @@ export class SecureDfu extends EventDispatcher {
 
     /**
      * Smart Speed Degradation.
-     * If enabled, the library will automatically reduce PRN and/or packetSize
-     * when errors occur, and retry the transfer.
+     *
+     * If set to `true`, the library will monitor for errors (CRC mismatch, GATT write fail)
+     * and automatically:
+     * 1. Retry 3 times with current settings.
+     * 2. Degrade MTU to the next safe tier (`[256, 128, 64, 32, 23]`).
+     * 3. Reduce PRN interval if MTU is already at minimum.
+     *
+     * Can also be a callback function for custom logic.
      */
     public enableSmartSpeed: SmartSpeedConfig = false;
 
