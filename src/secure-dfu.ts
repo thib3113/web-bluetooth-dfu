@@ -69,6 +69,8 @@ export interface UuidOptions {
     packet?: number | string;
 }
 
+export type SmartSpeedConfig = boolean | ((error: string, prn: number, packetSize: number) => { prn: number, packetSize: number } | null);
+
 export class SecureDfu extends EventDispatcher {
     public static SERVICE_UUID: number = 0xFE59;
     public static EVENT_LOG: string = "log";
@@ -87,13 +89,21 @@ export class SecureDfu extends EventDispatcher {
     private writeQueue: Promise<any> = Promise.resolve();
 
     /**
-     * Packet size for data transfer. Default to 20 for maximum compatibility.
-     * Can be increased (e.g., 100) for better performance on modern devices.
+     * Packet size for data transfer.
+     *
+     * **Defaults to 100** for better performance on modern devices.
+     * The library will fragment this if the negotiated MTU is lower, or
+     * Smart Speed can automatically reduce it if instability is detected.
      */
-    public packetSize: number = 20;
+    public packetSize: number = 100;
 
     /**
-     * PRN interval. Set to 15-20 for good speed.
+     * Packet Receipt Notification (PRN) interval.
+     *
+     * Defines how many packets are sent before waiting for a confirmation from the device.
+     * - `0`: Disabled (Fastest, but riskier flow control).
+     * - `10-12`: Balanced.
+     * - `1`: Slowest, most robust.
      */
     public packetReceiptNotification: number = 0;
 
@@ -103,6 +113,20 @@ export class SecureDfu extends EventDispatcher {
      */
     public forceRestart: boolean = true;
 
+    /**
+     * Smart Speed Degradation.
+     *
+     * If set to `true`, the library will monitor for errors (CRC mismatch, GATT write fail)
+     * and automatically:
+     * 1. Retry 3 times with current settings.
+     * 2. Degrade MTU to the next safe tier (`[256, 128, 64, 32, 23]`).
+     * 3. Reduce PRN interval if MTU is already at minimum.
+     *
+     * Can also be a callback function for custom logic.
+     */
+    public enableSmartSpeed: SmartSpeedConfig = false;
+
+    private retriesAtCurrentSpeed: number = 0;
     private totalBytes: number = 0;
     private sentBytes: number = 0;
     private validatedBytes: number = 0;
@@ -314,6 +338,22 @@ export class SecureDfu extends EventDispatcher {
                 return this.transferObject(buffer, createType, maxSize, end);
             }
             this.log("transfer complete");
+            this.retriesAtCurrentSpeed = 0;
+        })
+        .catch(async (error) => {
+            if (this.calculateSmartSpeed(error.message)) {
+                // Reset write queue to allow new operations
+                this.writeQueue = Promise.resolve();
+
+                if (this.packetReceiptNotification > 0) {
+                    const view = new DataView(new ArrayBuffer(2));
+                    view.setUint16(0, this.packetReceiptNotification, LITTLE_ENDIAN);
+                    await this.sendControl(OPERATIONS.RECEIPT_NOTIFICATIONS, view.buffer);
+                }
+                this.packetsSentSincePRN = 0;
+                return this.transferObject(buffer, createType, maxSize, offset);
+            }
+            throw error;
         });
     }
 
@@ -346,6 +386,56 @@ export class SecureDfu extends EventDispatcher {
         return crc === this.crc32Impl(new Uint8Array(buffer));
     }
 
+    private calculateSmartSpeed(error: string): boolean {
+        if (!this.enableSmartSpeed) return false;
+
+        this.retriesAtCurrentSpeed++;
+
+        // Retry 3 times at current speed before degrading
+        if (this.retriesAtCurrentSpeed <= 3) {
+            this.log(`Smart Speed: Retrying with same parameters (Attempt ${this.retriesAtCurrentSpeed}/3)`);
+            return true;
+        }
+
+        this.retriesAtCurrentSpeed = 0;
+        let newPrn = this.packetReceiptNotification;
+        let newSize = this.packetSize;
+        let changed = false;
+
+        if (typeof this.enableSmartSpeed === "function") {
+            const result = this.enableSmartSpeed(error, newPrn, newSize);
+            if (result) {
+                newPrn = result.prn;
+                newSize = result.packetSize;
+                changed = true;
+            }
+        } else {
+            // Default Strategy with Safe Tiers
+            const SAFE_TIERS = [256, 128, 64, 32, 23];
+            const lowerTier = SAFE_TIERS.find(t => t < newSize);
+
+            if (lowerTier) {
+                newSize = lowerTier;
+                changed = true;
+            } else if (newPrn > 1) {
+                newPrn = Math.ceil(newPrn / 2);
+                changed = true;
+            } else if (newPrn === 0) {
+                // If PRN was disabled (0), enable it safely
+                newPrn = 12;
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            this.log(`Smart Speed: Degrading parameters. PRN: ${this.packetReceiptNotification}->${newPrn}, MTU: ${this.packetSize}->${newSize}`);
+            this.packetReceiptNotification = newPrn;
+            this.packetSize = newSize;
+            return true;
+        }
+        return false;
+    }
+
     public requestDevice(buttonLess: boolean, filters: any, uuids: UuidOptions = this.DEFAULT_UUIDS): Promise<BluetoothDevice> {
         uuids = { ...this.DEFAULT_UUIDS, ...uuids };
         const options: any = { optionalServices: [ uuids.service ] };
@@ -370,6 +460,7 @@ export class SecureDfu extends EventDispatcher {
     }
 
     public update(device: BluetoothDevice, init: ArrayBuffer, firmware: ArrayBuffer): Promise<BluetoothDevice> {
+        this.retriesAtCurrentSpeed = 0;
         return this.connect(device)
             .then(() => this.transfer(init, "init", OPERATIONS.SELECT_COMMAND, OPERATIONS.CREATE_COMMAND))
             .then(() => new Promise(r => setTimeout(r, 500))) // Wait after init
