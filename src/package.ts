@@ -9,9 +9,13 @@ import * as JSZip from "jszip";
 
 export class SecureDfuPackage {
     private zipFile: any = null;
-    private manifest: any = null;
+    private _manifest: any = null;
 
     constructor(private buffer: ArrayBuffer) {}
+
+    public get manifest(): unknown {
+        return this._manifest ? JSON.parse(JSON.stringify(this._manifest)) : null;
+    }
 
     public async load(): Promise<SecureDfuPackage> {
         this.zipFile = await JSZip.loadAsync(this.buffer);
@@ -20,14 +24,14 @@ export class SecureDfuPackage {
             throw new Error("Unable to find manifest, is this a proper DFU package?");
         }
         const content = await manifestFile.async("string");
-        this.manifest = JSON.parse(content).manifest;
+        this._manifest = JSON.parse(content).manifest;
         return this;
     }
 
     private async getImage(types: string[]): Promise<any> {
         for (const type of types) {
-            if (this.manifest[type]) {
-                const entry = this.manifest[type];
+            if (this._manifest[type]) {
+                const entry = this._manifest[type];
                 const result: any = {
                     type: type,
                     initFile: entry.dat_file,
