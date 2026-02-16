@@ -8,6 +8,48 @@ const execAsync = promisify(exec);
 async function build() {
     console.log('🚀 Starting Universal Build...');
 
+    // Extract version and name from package.json
+    const packageJson = JSON.parse(await fs.readFile('./package.json', 'utf-8'));
+    const { name, version, repository } = packageJson;
+
+    // Get build metadata
+    let commitHash = process.env.GITHUB_SHA;
+    if (!commitHash) {
+        try {
+            const { stdout } = await execAsync('git rev-parse HEAD');
+            commitHash = stdout.trim();
+        } catch {
+            commitHash = 'unknown';
+        }
+    }
+
+    const runId = process.env.GITHUB_RUN_ID || 'local';
+    const buildDate = new Date().toISOString();
+
+    // Determine Repo URL
+    let repoUrl = 'unknown';
+    if (process.env.GITHUB_REPOSITORY) {
+        const serverUrl = process.env.GITHUB_SERVER_URL || 'https://github.com';
+        repoUrl = `${serverUrl}/${process.env.GITHUB_REPOSITORY}`;
+    } else if (repository && repository.url) {
+        repoUrl = repository.url.replace('git+', '').replace('.git', '');
+    }
+
+    // Construct run link
+    const runLink = runId !== 'local' && repoUrl !== 'unknown'
+        ? `${repoUrl}/actions/runs/${runId}`
+        : 'Local Build';
+
+    const banner = `/*!
+ * ${name} v${version}
+ * ${repoUrl}
+ *
+ * Built from commit: ${commitHash}
+ * Build Run: ${runId}
+ * Date: ${buildDate}
+ * Provenance: ${runLink}
+ */`;
+
     await fs.rm('dist', { recursive: true, force: true });
     await fs.mkdir('dist', { recursive: true });
 
@@ -23,6 +65,7 @@ async function build() {
         target: ['es2017'],
         format: 'iife',
         platform: 'browser',
+        banner: { js: banner },
     });
 
     // 2. ESM Bundle (Modules) - Dependencies external

@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-node
@@ -28,6 +29,7 @@ jobs:
     permissions:
       id-token: write
       packages: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-node
@@ -41,3 +43,120 @@ jobs:
         name: publish on GPR
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  github-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-node
+        with:
+          NODE_VERSION: lts/*
+
+      - name: Validate version consistency
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION=${GITHUB_REF_NAME#v}
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "ERROR: Version mismatch! package.json: $PKG_VERSION, tag: $TAG_VERSION"
+            exit 1
+          fi
+        shell: bash
+
+      - name: Generate Checksums
+        run: |
+          shasum -a 256 dist/secure-dfu.js > checksums.txt
+          cat checksums.txt
+
+      - name: Attest Build Provenance
+        id: attest
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: 'dist/secure-dfu.js'
+
+      - name: Create Release and Upload Assets
+        uses: actions/github-script@v7
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          ATTESTATION_URL: ${{ steps.attest.outputs.attestation-url }}
+        with:
+          script: |
+            const fs = require('fs');
+            const { TAG_NAME, ATTESTATION_URL } = process.env;
+
+            console.log(`Processing release for tag: ${TAG_NAME}`);
+
+            // 1. Get or Create Release
+            let release;
+            try {
+              const r = await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: TAG_NAME,
+                name: `Release ${TAG_NAME}`,
+                draft: false,
+                prerelease: false,
+                generate_release_notes: true
+              });
+              release = r.data;
+            } catch (e) {
+              if (e.status === 422) { // Already exists
+                 const r = await github.rest.repos.getReleaseByTag({
+                   owner: context.repo.owner,
+                   repo: context.repo.repo,
+                   tag: TAG_NAME
+                 });
+                 release = r.data;
+              } else {
+                throw e;
+              }
+            }
+
+            // 2. Upload Assets
+            const assets = ['dist/secure-dfu.js', 'checksums.txt'];
+            for (const assetPath of assets) {
+               const assetName = assetPath.split('/').pop();
+               if (fs.existsSync(assetPath)) {
+                  // Delete existing if necessary
+                  const existing = release.assets.find(a => a.name === assetName);
+                  if (existing) {
+                    await github.rest.repos.deleteReleaseAsset({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      asset_id: existing.id
+                    });
+                  }
+
+                  await github.rest.repos.uploadReleaseAsset({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    release_id: release.id,
+                    name: assetName,
+                    data: fs.readFileSync(assetPath)
+                  });
+               }
+            }
+
+            // 3. Update body with Attestation Link
+            if (ATTESTATION_URL) {
+                const verificationBlock = `
+                ---
+                ### 🛡️ Security & Provenance
+                This release includes signed build provenance attestations.
+                - **Official Attestation**: [Verify on GitHub](${ATTESTATION_URL})
+                `;
+
+                const currentBody = release.body || '';
+                if (!currentBody.includes("Security & Provenance")) {
+                    await github.rest.repos.updateRelease({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      release_id: release.id,
+                      body: currentBody + '\n' + verificationBlock
+                    });
+                }
+            }
